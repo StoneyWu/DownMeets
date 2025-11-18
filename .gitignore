@@ -1,5 +1,22 @@
+# Virtual environments
 *.venv
 *venv
+
+# Downloaded video files
 *.m4a
 *.mp4
 *.mp4.part
+
+# Output directories
+meets/
+Uploaded/
+
+# Temporary/cache files
+todelete/
+.DS_Store
+
+# Sensitive files (do not commit)
+drive.google.com_cookies.txt
+
+# Log files
+*.log
