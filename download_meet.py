@@ -9,9 +9,28 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 URL_FILE = "urls.txt"
 OUTPUT_DIR = "meets"
-COOKIES_FILE = "drive.google.com_cookies.txt"
+COOKIE_CANDIDATES = ["cookies.txt", "drive.google.com_cookies.txt"]
 MAX_WORKERS = 4
 MAX_RETRIES = 3
+
+BROWSER_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) '
+                  'Gecko/20100101 Firefox/124.0',
+}
+
+
+def find_cookies_file():
+    """Return the first cookie file that exists, else the preferred default name."""
+    env_path = os.environ.get("DOWNMEETS_COOKIES")
+    if env_path:
+        return env_path
+    for name in COOKIE_CANDIDATES:
+        if os.path.exists(name):
+            return name
+    return COOKIE_CANDIDATES[0]
+
+
+COOKIES_FILE = find_cookies_file()
 
 def read_urls_from_file(file_path=URL_FILE):
     if not os.path.exists(file_path):
@@ -22,33 +41,55 @@ def read_urls_from_file(file_path=URL_FILE):
     with open(file_path, "r") as f:
         return [line.strip() for line in f if line.strip() and not line.startswith("#")]
 
+def load_netscape_cookies(session, cookies_file):
+    """Load a Netscape cookie jar into a requests session.
+
+    Lines prefixed with "#HttpOnly_" are real cookies, not comments. Google's
+    session cookies (__Secure-1PSID, OSID, ...) live on those lines, so treating
+    them as comments yields a 401 even with a perfectly valid export.
+    """
+    count = 0
+    with open(cookies_file, 'r') as f:
+        for line in f:
+            line = line.rstrip("\n")
+            if line.startswith("#HttpOnly_"):
+                line = line[len("#HttpOnly_"):]
+            elif line.startswith("#") or not line.strip():
+                continue
+            parts = line.split('\t')
+            if len(parts) >= 7:
+                domain, _, path, secure, expiration, name, value = parts[:7]
+                session.cookies.set(name, value, domain=domain, path=path)
+                count += 1
+    return count
+
 def is_cookie_valid(urls, cookies_file=COOKIES_FILE):
     try:
         if not os.path.exists(cookies_file):
-            print("⚠️  No cookies.txt file found.")
+            print(f"⚠️  No cookie file found. Looked for: {', '.join(COOKIE_CANDIDATES)}")
             return False
         if not urls:
             print("⚠️  URL list is empty. Please add at least one Drive link to urls.txt.")
             return False
 
         test_url = urls[0]
-        print(f"🔍 Checking cookies.txt against: {test_url}")
+        print(f"🔍 Checking {cookies_file} against: {test_url}")
 
         session = requests.Session()
-        with open(cookies_file, 'r') as f:
-            for line in f:
-                if not line.startswith('#') and '\t' in line:
-                    parts = line.strip().split('\t')
-                    if len(parts) >= 7:
-                        domain, _, path, secure, expiration, name, value = parts
-                        session.cookies.set(name, value, domain=domain, path=path)
-
-        response = session.get(test_url, allow_redirects=True)
-        if "Sign in" in response.text or "accounts.google.com" in response.url:
-            print("❌ Your cookies.txt file is either expired or invalid.")
+        loaded = load_netscape_cookies(session, cookies_file)
+        if loaded == 0:
+            print(f"❌ {cookies_file} has no usable cookies (expected Netscape format).")
             return False
 
-        print("✅ Authentication successful — cookies.txt is valid.")
+        response = session.get(test_url, allow_redirects=True, headers=BROWSER_HEADERS)
+        if response.status_code in (401, 403):
+            print(f"❌ Drive returned HTTP {response.status_code} — cookies are expired or lack access.")
+            return False
+        if "accounts.google.com" in response.url:
+            print("❌ Redirected to the Google sign-in page — cookies are expired or invalid.")
+            return False
+
+        print(f"✅ Authentication successful — {cookies_file} is valid ({loaded} cookies).")
         return True
     except Exception as e:
         print(f"⚠️  Error checking cookie validity: {e}")
@@ -85,9 +126,7 @@ def download_with_ytdlp_and_rename(url, output_dir, cookies_file=COOKIES_FILE):
         'noplaylist': True,
         'external_downloader': 'aria2c',
         'external_downloader_args': ['-x', '16', '-s', '16', '-k', '1M'],
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:124.0) Gecko/20100101 Firefox/124.0',
-        },
+        'http_headers': dict(BROWSER_HEADERS),
     }
 
     try:

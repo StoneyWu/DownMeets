@@ -71,7 +71,7 @@ poetry install
    - Install a browser extension like "Get cookies.txt LOCALLY" or "cookies.txt"
    - Login to Google Drive in your browser
    - Export cookies for `drive.google.com` in Netscape format
-   - Save the file as `drive.google.com_cookies.txt` in the project root
+   - Save the file as `cookies.txt` (or `drive.google.com_cookies.txt`) in the project root
 
 ## Usage
 
@@ -108,7 +108,7 @@ The main settings are defined at the beginning of the `download_meet.py` file:
 # Configuration
 URL_FILE = "urls.txt"           # File with URLs (one per line)
 OUTPUT_DIR = "meets"            # Output directory for downloaded videos
-COOKIES_FILE = "drive.google.com_cookies.txt"  # Browser cookies file
+COOKIE_CANDIDATES = ["cookies.txt", "drive.google.com_cookies.txt"]  # Browser cookies file
 MAX_WORKERS = 4                 # Number of parallel download threads
 MAX_RETRIES = 3                 # Number of retry attempts per URL
 ```
@@ -127,7 +127,7 @@ MAX_RETRIES = 3                 # Number of retry attempts per URL
 ## How It Works
 
 1. **Cookie Validation**:
-   - Loads cookies from `drive.google.com_cookies.txt` (Netscape format)
+   - Loads cookies from `cookies.txt` (or `drive.google.com_cookies.txt`) (Netscape format)
    - Validates authentication by testing against the first URL
    - Ensures cookies are valid before starting downloads
 
@@ -161,7 +161,7 @@ This method works even when Google Drive shows "Download options disabled" or "D
 ## Troubleshooting
 
 ### Cookie Issues
-- **"No cookies.txt file found"**: Export cookies from your browser and save as `drive.google.com_cookies.txt`
+- **"No cookies.txt file found"**: Export cookies from your browser and save as `cookies.txt` (or `drive.google.com_cookies.txt`)
 - **"Your cookies.txt file is either expired or invalid"**: Re-export fresh cookies from an authenticated browser session
 - **Cookie format errors**: Ensure cookies are exported in Netscape format (not JSON)
 

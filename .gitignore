@@ -16,6 +16,7 @@ todelete/
 .DS_Store
 
 # Sensitive files (do not commit)
+cookies.txt
 drive.google.com_cookies.txt
 
 # Log files

@@ -18,7 +18,7 @@ DownMeets is a Python tool for automatically downloading Google Meet recordings 
 - **download_meet.py** - Main script containing all download logic
 - **urls.txt** - Input file containing Google Drive URLs (one per line)
 - **meets/** - Output directory for downloaded videos
-- **drive.google.com_cookies.txt** - Browser cookies file for authentication
+- **cookies.txt** - Browser cookies file for authentication
 - **pyproject.toml** - Poetry configuration with dependencies and tasks
 
 ## Development Commands
@@ -60,7 +60,7 @@ The application uses yt-dlp as the primary download method:
 3. **Retry Logic**: Automatic retry mechanism with configurable MAX_RETRIES=3
 
 ### Authentication System
-- **Cookie-based Authentication**: Uses exported browser cookies from `drive.google.com_cookies.txt`
+- **Cookie-based Authentication**: Uses exported browser cookies from `cookies.txt` (or `drive.google.com_cookies.txt`)
 - **Validity Checking**: Validates cookies before attempting downloads
 - **Session Management**: Maintains authenticated sessions across requests
 
@@ -81,7 +81,7 @@ The application uses yt-dlp as the primary download method:
 ```python
 URL_FILE = "urls.txt"           # Input URLs file
 OUTPUT_DIR = "meets"            # Download directory  
-COOKIES_FILE = "drive.google.com_cookies.txt"  # Auth cookies
+COOKIE_CANDIDATES = ["cookies.txt", "drive.google.com_cookies.txt"]  # Auth cookies
 MAX_WORKERS = 4                 # Parallel download threads
 MAX_RETRIES = 3                 # Retry attempts per URL
 ```
@@ -100,7 +100,7 @@ MAX_RETRIES = 3                 # Retry attempts per URL
 ### Browser Setup
 The tool requires exporting cookies from a logged-in Google Drive session:
 1. Login to Google Drive in browser
-2. Export cookies to `drive.google.com_cookies.txt` (Netscape format)
+2. Export cookies to `cookies.txt` (or `drive.google.com_cookies.txt`) (Netscape format)
 3. Place file in project root directory
 
 ## Error Handling
