@@ -1,3 +1,6 @@
+[tool.poetry]
+package-mode = false
+
 [project]
 name = "DownMeets"
 version = "0.1.0"
@@ -6,7 +9,6 @@ authors = [
     {name = "Douglas Oliveira",email = "63203428+imdsoliveira@users.noreply.github.com"}
 ]
 readme = "README.md"
-package-mode = false
 requires-python = ">=3.13,<4.0"
 dependencies = [
     "requests (>=2.32.3,<3.0.0)",
