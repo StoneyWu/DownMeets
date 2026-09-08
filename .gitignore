@@ -1,3 +1,8 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
 # Virtual environments
 *.venv
 *venv
@@ -16,8 +21,11 @@ todelete/
 .DS_Store
 
 # Sensitive files (do not commit)
+# cookie 檔等同 Google 登入憑證，用樣式比對涵蓋各種命名
 cookies.txt
 drive.google.com_cookies.txt
+*cookie*.txt
+*cookies*
 
 # Log files
 *.log
