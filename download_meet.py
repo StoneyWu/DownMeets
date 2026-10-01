@@ -13,12 +13,16 @@
 """
 
 import argparse
+import hashlib
+import http.cookiejar
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -35,7 +39,8 @@ SCRIPT_NAME = "download_meet.py"
 REMOTE_URL = ("https://raw.githubusercontent.com/StoneyWu/DownMeets/"
               "customized/download_meet.py")
 URL_FILE = "urls.txt"
-COOKIE_CANDIDATES = ("cookies.txt", "drive.google.com_cookies.txt")
+COOKIE_CANDIDATES = ("cookies.txt", "drive.google.com_cookies.txt",
+                     "cookies.json", "drive.google.com_cookies.json")
 DEFAULT_BROWSER = ("chrome", None)
 SUPPORTED_BROWSERS = (
     "brave", "chrome", "chromium", "edge", "opera", "vivaldi", "whale", "firefox", "safari",
@@ -315,7 +320,7 @@ def explain_cookie_failure(description, cookie_count=None):
         print(f"       {invocation_hint()} --diagnose \"網址\"\n")
         print("   判讀方式：")
         print("     第 1 項 Drive 網頁版是 ❌  → 這個帳號看不到這支影片，程式無解")
-        print("     第 4 項 get_video_info ❌  → 把它顯示的原因貼出來")
+        print("     第 2 項 playback API ❌    → 把它顯示的原因貼出來")
         return
 
     print(f"   若是驗證問題（目前用的是 {description}），可以試試：")
@@ -433,9 +438,11 @@ def plan_download(url, title, ext, output_dir, taken, remembered):
 # --------------------------------------------------------------------------
 
 DRIVE_ORIGIN = "https://drive.google.com"
-VIDEO_INFO_API = "https://drive.google.com/get_video_info?docid={id}"
-PLAYBACK_API = ("https://content-workspacevideo-pa.googleapis.com/v1/drive/media"
+# 跟 yt-dlp 打的是同一個 API，差在網域：clients6.google.com 收得到 .google.com
+# 的登入 cookie，googleapis.com 收不到。key 是 Drive 網頁版內嵌的公開 key。
+PLAYBACK_API = ("https://workspacevideo-pa.clients6.google.com/v1/drive/media"
                 "/{id}/playback?key=AIzaSyDVQw45DwoYh632gvsP5vPDqEKvb-Ywnb8")
+SAPISID_NAMES = ("SAPISID", "__Secure-3PAPISID")
 
 
 LOGIN_COOKIE_NAMES = ("SID", "__Secure-1PSID", "__Secure-3PSID",
@@ -531,6 +538,24 @@ def materialize_cookies(jar, workdir):
     return {"cookiefile": str(path)}
 
 
+def load_json_cookies(jar, path):
+    """讀 Cookie-Editor / EditThisCookie 那種 JSON 匯出。
+
+    yt-dlp 只吃 Netscape 格式，但擴充套件預設常是 JSON，使用者很容易選錯。
+    """
+    with open(path, encoding="utf-8") as handle:
+        entries = json.load(handle)
+    for entry in entries:
+        domain = entry["domain"]
+        session = entry.get("session") or "expirationDate" not in entry
+        jar.set_cookie(http.cookiejar.Cookie(
+            0, entry["name"], entry["value"], None, False,
+            domain, not entry.get("hostOnly", False), domain.startswith("."),
+            entry.get("path", "/"), True, entry.get("secure", False),
+            None if session else int(entry["expirationDate"]), session,
+            None, None, {"HttpOnly": ""} if entry.get("httpOnly") else {}))
+
+
 def load_cookiejar(cookie_opts):
     """把 cookie 來源轉成 cookiejar，診斷時要自己發請求。"""
     spec = cookie_opts.get("cookiesfrombrowser")
@@ -542,7 +567,12 @@ def load_cookiejar(cookie_opts):
     if path:
         from yt_dlp.cookies import YoutubeDLCookieJar
         jar = YoutubeDLCookieJar(path)
-        jar.load()
+        with open(path, encoding="utf-8", errors="replace") as handle:
+            is_json = handle.read(1) in ("[", "{")
+        if is_json:
+            load_json_cookies(jar, path)
+        else:
+            jar.load()
         return jar
     return None
 
@@ -552,62 +582,62 @@ def extract_file_id(url):
     return match.group(1) if match else None
 
 
-def parse_video_info(body):
-    """解析 get_video_info 的回應（舊式 query string 格式）。
+def extract_authuser(url):
+    """網址含 /u/N/ 時代表瀏覽器裡第 N 個登入的帳號。"""
+    match = re.search(r"/u/(\d+)/", url)
+    return match.group(1) if match else "0"
 
-    成功時長這樣：status=ok&title=...&fmt_stream_map=22|https://...,18|https://...
-    失敗時：status=fail&errorcode=150&reason=...
-    """
-    data = urllib.parse.parse_qs(body)
-    if data.get("status", [""])[0] != "ok":
-        return None, data.get("reason", ["未知原因"])[0]
 
-    # fmt_list 形如 "22/1280x720,18/640x360"，用來挑畫質最高的 itag
-    pixels = {}
-    for entry in data.get("fmt_list", [""])[0].split(","):
-        parts = entry.split("/")
-        if len(parts) >= 2 and "x" in parts[1]:
-            try:
-                width, height = (int(n) for n in parts[1].split("x")[:2])
-                pixels[parts[0]] = width * height
-            except ValueError:
-                continue
+def sapisid_hash_headers(cookiejar, authuser="0"):
+    """Google 跨網域 API 的授權標頭，Drive 網頁版自己就是這樣送的。"""
+    sapisid = next((c.value for c in cookiejar or []
+                    if c.name in SAPISID_NAMES and "google.com" in (c.domain or "")), None)
+    if not sapisid:
+        return None
+    stamp = str(int(time.time()))
+    digest = hashlib.sha1(f"{stamp} {sapisid} {DRIVE_ORIGIN}".encode()).hexdigest()
+    return {"Authorization": f"SAPISIDHASH {stamp}_{digest}",
+            "X-Goog-AuthUser": authuser,
+            "Origin": DRIVE_ORIGIN,
+            "Referer": f"{DRIVE_ORIGIN}/"}
 
-    streams = []
-    for item in data.get("fmt_stream_map", [""])[0].split(","):
-        itag, _, stream_url = item.partition("|")
-        if stream_url:
-            streams.append((pixels.get(itag, 0), itag, stream_url))
+
+def parse_playback(data):
+    """從 playback API 的回應挑出畫質最高的整段串流（影音合一的 mp4）。"""
+    streaming = data.get("mediaStreamingData", {})
+    transcodes = streaming.get("formatStreamingData", {}).get("progressiveTranscodes", [])
+    streams = [t for t in transcodes if t.get("url")]
     if not streams:
-        return None, "回應裡沒有可用的串流網址"
+        state = streaming.get("transcodeAvailabilityState", {}).get("state", "")
+        return None, "回應裡沒有可用的串流網址" + (f"（轉檔狀態 {state}）" if state else "")
 
-    streams.sort(reverse=True)
-    return {"title": data.get("title", ["video"])[0],
-            "itag": streams[0][1],
-            "url": streams[0][2],
+    # 回應不保證照畫質排序，實測第一個是 360p
+    best = max(streams, key=lambda t: t.get("transcodeMetadata", {}).get("height", 0))
+    return {"title": data.get("mediaMetadata", {}).get("title") or "video",
+            "itag": best.get("itag"),
+            "height": best.get("transcodeMetadata", {}).get("height"),
+            "url": best["url"],
             "count": len(streams)}, None
 
 
-def fetch_video_info(video_id, cookiejar):
-    """走 drive.google.com 同網域的舊端點取得串流網址。
-
-    yt-dlp 現在的 googledrive extractor 打的是 googleapis.com 的新 API，
-    而 .google.com 的 cookie 依網域規則送不過去，對私有影片一律 403。
-    這個舊端點是同網域，cookie 有效。
-    """
+def fetch_video_info(video_id, cookiejar, authuser="0"):
+    """向 Drive 網頁版用的 playback API 取得串流網址。"""
+    auth = sapisid_hash_headers(cookiejar, authuser)
+    if not auth:
+        return None, "cookie 裡沒有 SAPISID，無法產生授權標頭"
     opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookiejar))
-    request = urllib.request.Request(
-        VIDEO_INFO_API.format(id=video_id),
-        headers={**BROWSER_HEADERS, "Referer": f"{DRIVE_ORIGIN}/"})
+    status, _, body = http_probe(opener, PLAYBACK_API.format(id=video_id),
+                                 {**BROWSER_HEADERS, **auth}, limit=None)
+    if status != 200:
+        return None, f"HTTP {status} {summarize_error(body)}".strip()
     try:
-        with opener.open(request, timeout=30) as response:
-            return parse_video_info(response.read().decode("utf-8", "replace"))
-    except Exception as error:
-        return None, str(error)
+        return parse_playback(json.loads(body))
+    except ValueError:
+        return None, "回應不是 JSON"
 
 
 def http_probe(opener, url, headers, limit=600):
-    """發一個請求，回傳 (狀態碼, content-type, 內文摘要)。"""
+    """發一個請求，回傳 (狀態碼, content-type, 內文摘要)。limit=None 讀全部。"""
     request = urllib.request.Request(url, headers=headers)
     try:
         with opener.open(request, timeout=30) as response:
@@ -662,23 +692,18 @@ def run_diagnosis(url, cookie_opts, save_cookies=None):
         verdict = "❌ 這個帳號看不到（權限問題，程式無解）"
     print(f"  1. Drive 網頁版           : HTTP {status}  {verdict}")
 
-    api = PLAYBACK_API.format(id=video_id)
-    status, ctype, body = http_probe(opener, api, {**base, "Referer": f"{DRIVE_ORIGIN}/"})
-    print(f"  2. playback API（無授權） : HTTP {status}  {judge(status, ctype, body)}")
-
+    info, error = fetch_video_info(video_id, jar, extract_authuser(url))
+    if info:
+        print(f"  2. playback API           : ✅ 拿到 {info['count']} 個串流"
+              f"，最高 {info['height']}p，標題「{info['title']}」")
+        print("     🎯 這條路通——下載會自動走這裡")
+    else:
+        print(f"  2. playback API           : ❌ {error}")
 
     download_url = ("https://drive.usercontent.google.com/download"
                     f"?id={video_id}&export=download&confirm=t")
     status, ctype, body = http_probe(opener, download_url, base)
     print(f"  3. usercontent 下載端點   : HTTP {status}  {judge(status, ctype, body)}")
-
-    info, error = fetch_video_info(video_id, jar)
-    if info:
-        print(f"  4. get_video_info（舊端點）: ✅ 拿到 {info['count']} 個串流"
-              f"，最佳 itag {info['itag']}，標題「{info['title']}」")
-        print("     🎯 這條路通——下載會自動走這裡")
-    else:
-        print(f"  4. get_video_info（舊端點）: ❌ {error}")
 
     print("\n把以上結果貼出來就能判斷問題出在哪一層。")
     return 0
@@ -730,18 +755,18 @@ def probe(url, cookie_opts):
 def probe_all(urls, cookie_opts, workers):
     """取得每支影片的標題與下載來源。
 
-    回傳 [(下載用網址, 標題, 副檔名) 或 None]。優先走 drive.google.com
-    同網域的舊端點（cookie 有效），失敗才退回 yt-dlp 的 extractor。
+    回傳 [(下載用網址, 標題, 副檔名) 或 None]。優先走 Drive 網頁版用的
+    playback API（帶 SAPISIDHASH），失敗才退回 yt-dlp 的 extractor。
     """
     jar = load_cookiejar(cookie_opts)
 
     def probe_one(url):
         video_id = extract_file_id(url)
         if video_id:
-            info, error = fetch_video_info(video_id, jar)
+            info, error = fetch_video_info(video_id, jar, extract_authuser(url))
             if info:
                 return info["url"], info["title"], "mp4"
-            print(f"ℹ️  舊端點取不到（{error}），改用 yt-dlp：{url}")
+            print(f"ℹ️  playback API 取不到（{error}），改用 yt-dlp：{url}")
         try:
             title, ext = probe(url, cookie_opts)
             return url, title, ext
@@ -838,7 +863,7 @@ def parse_args():
                              "多 profile 時可指定，例如 --browser \"chrome:Profile 1\"。"
                              f"可用：{'、'.join(SUPPORTED_BROWSERS)}")
     parser.add_argument("--cookies", metavar="檔案",
-                        help="改用匯出的 Netscape 格式 cookie 檔")
+                        help="改用匯出的 cookie 檔（Netscape 或 JSON 格式）")
     parser.add_argument("--output", metavar="目錄", default=".",
                         help="影片存放目錄（預設為當前目錄）")
     parser.add_argument("--save-cookies", metavar="檔案",
@@ -902,6 +927,14 @@ def run(args, workdir):
             save_cookies_to(jar, args.save_cookies)
         # 存成暫存檔，後續全部用它，免得每個階段都再彈一次鑰匙圈
         cookie_opts = materialize_cookies(jar, workdir)
+    else:
+        # 轉成 Netscape 暫存檔，yt-dlp 不吃 JSON 格式的 cookie 檔
+        try:
+            cookie_opts = materialize_cookies(load_cookiejar(cookie_opts), workdir)
+        except (OSError, ValueError, KeyError, http.cookiejar.LoadError) as error:
+            print(f"❌ cookie 檔讀不懂：{error}")
+            print("   請匯出成 Netscape 或 JSON 格式（Cookie-Editor 等擴充套件都有這兩種）")
+            return 1
 
     print(f"🔍 讀取 {len(urls)} 支影片的資訊…")
     probed = probe_all(urls, cookie_opts, workers)

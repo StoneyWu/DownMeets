@@ -18,7 +18,7 @@ uv run https://raw.githubusercontent.com/StoneyWu/DownMeets/customized/download_
 
 `uv run <URL>` 只會抓那一個檔案，一旦拆出 import 就整個壞掉。所以這裡刻意
 違反「多個小檔優於單一大檔」的通則。要加功能請加在同一個檔案裡，
-並注意控制檔案長度（目前約 450 行）。
+並注意控制檔案長度（目前約 975 行）。
 
 ## 依賴管理
 
@@ -54,16 +54,27 @@ uv 在 3.9 環境下會沉默解析出快一年前的舊版 yt-dlp，Google Driv
 
 已經試過而且**確定無效**的方向：
 
-- **SAPISIDHASH 授權標頭**：Google 跨網域 API 的標準機制，但這個端點回 401。
-  另外只要送 `X-Origin` 就會先觸發 XD3 檢查而 400，連驗證都到不了。
-- **`authuser` / `X-Goog-AuthUser`**：網址若含 `/u/N/` 理論上該指定帳號，
-  但實測對私有影片無效。
+- **在 googleapis.com 網域上送 SAPISIDHASH**：回 401。另外只要送 `X-Origin`
+  就會先觸發 XD3 檢查而 400，連驗證都到不了。
 - **`drive.usercontent.google.com/download`**：對「僅供檢視」的檔案回登入頁。
+- **`drive.google.com/get_video_info?docid={id}`**：以前的可行路徑，
+  2026-10 確認已被 Google 移除——任何請求（含不存在的路徑）都回 404。
 
-**可行的路徑是 `https://drive.google.com/get_video_info?docid={id}`** —— 舊端點，
-但還活著，而且就在 `drive.google.com` 底下，cookie 有效。回應是舊式 query string
-（`status=ok&fmt_stream_map=itag|url,...`），解析後拿最高畫質的串流網址下載。
-`--diagnose` 保留了各端點的逐層測試，哪天這條也壞了可以快速定位。
+**可行的路徑是同一個 playback API 換到 `workspacevideo-pa.clients6.google.com`**
+（Drive 網頁版播放器自己就打這裡，2026-10-01 用瀏覽器網路紀錄確認）。clients6 在
+google.com 底下，cookie 會被帶過去。三個條件缺一不可，實測：
+
+| 帶什麼 | 結果 |
+|---|---|
+| 只有 cookie | 403 `API_KEY_HTTP_REFERRER_BLOCKED`（key 要求 Referer）|
+| cookie + Origin/Referer | 403 `permission denied on media item` |
+| cookie + Origin/Referer + `Authorization: SAPISIDHASH` + `X-Goog-AuthUser` | 200 |
+
+回應是 JSON，`mediaStreamingData.formatStreamingData.progressiveTranscodes` 是影音合一的
+mp4，**陣列不照畫質排序**（實測第一個是 360p），要依 `transcodeMetadata.height` 挑。
+串流網址（`*.c.drive.google.com`）自帶簽章，下載時不需要 cookie。
+`--diagnose` 保留了各端點的逐層測試，哪天這條也壞了可以快速定位——
+到時候在瀏覽器開影片、看播放器的網路請求打哪裡，就是新路徑。
 
 ## 核心流程
 
@@ -93,6 +104,8 @@ parse_args → 環境自檢 → 決定 cookie 來源 → 平行 probe 取得標�
 - **cookie 全程只讀一次**，存成權限 600 的暫存檔給後續階段用。每讀一次
   macOS 就彈一次鑰匙圈。注意 `security` 本身就會問兩次（一次 ACL 授權、
   一次確認輸出明文），那是系統行為不是程式重複讀取，別再去追。
+- **cookie 檔接受 Netscape 和 JSON 兩種格式**。擴充套件（Cookie-Editor 等）預設常是 JSON，
+  yt-dlp 只吃 Netscape，所以一律先讀進 jar 再存成 Netscape 暫存檔給 yt-dlp。
 - **cookie 檔等同登入憑證**。`--save-cookies` 會檢查目標是否在 git repo 內
   且未被 ignore，是的話警告——這個 repo 是公開的。`.gitignore` 也用
   `*cookie*.txt` / `*cookies*` 樣式擋，不要縮回固定檔名。
@@ -112,7 +125,7 @@ python3 -m py_compile download_meet.py   # 語法檢查
 - **`ModuleNotFoundError: No module named 'yt_dlp'`**：使用者用的 python 沒裝 yt-dlp。
   腳本會捕捉這個並印出該機器適用的安裝指令，不要讓它變成 traceback。
 - **HTTP 403 / 驗證失敗**：先跑 `--diagnose`。第 1 項（Drive 網頁版）是 ❌
-  就是帳號沒權限，程式無解；第 4 項（get_video_info）的原因才是真線索。
+  就是帳號沒權限，程式無解；第 2 項（playback API）的原因才是真線索。
 - **cookie 到期**：Google 的登入 cookie（SID / SAPISID）多半以年計，
   不是幾小時。`cookie_expiry_summary()` 會印出實際到期日，不要用猜的。
 - **改動檔名邏輯後**：記得驗證 `build_filename()` 對三種輸入格式的輸出

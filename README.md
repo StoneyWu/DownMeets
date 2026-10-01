@@ -52,7 +52,7 @@ python3 -m venv .venv && .venv/bin/pip install yt-dlp
 | 選項 | 說明 |
 |------|------|
 | `--browser 名稱[:profile]` | 從哪個瀏覽器讀登入 cookie，預設 `chrome`。可用：brave、chrome、chromium、edge、opera、vivaldi、whale、firefox、safari。多 profile 時可指定，例如 `--browser "chrome:Profile 1"` |
-| `--cookies 檔案` | 改用匯出的 Netscape 格式 cookie 檔 |
+| `--cookies 檔案` | 改用匯出的 cookie 檔（Netscape 或 JSON 格式）|
 | `--output 目錄` | 影片存放目錄，預設為當前目錄 |
 | `--save-cookies 檔案` | 把這次讀到的瀏覽器 cookie 另存一份，之後用 `--cookies` 就不必再過鑰匙圈 |
 | `--diagnose` | 逐層測試 Google 各端點，找出失敗卡在哪一層 |
@@ -63,7 +63,7 @@ python3 -m venv .venv && .venv/bin/pip install yt-dlp
 預設直接讀你**瀏覽器裡現有的登入狀態**，不需要手動匯出 cookie。優先序：
 
 1. `--browser 名稱` 明確指定
-2. cookie 檔：`--cookies` 指定的檔案 > `$DOWNMEETS_COOKIES` > `./cookies.txt` > `./drive.google.com_cookies.txt`
+2. cookie 檔：`--cookies` 指定的檔案 > `$DOWNMEETS_COOKIES` > `./cookies.txt` > `./drive.google.com_cookies.txt` > 同名的 `.json`
 3. 都沒有就用預設瀏覽器 Chrome
 
 **Chrome 有多個 profile 時要指定。** yt-dlp 預設只讀 `Default`，你登入 Google 的若是別的 profile（工作帳號常見），會讀到一堆無關 cookie，最後表現成 HTTP 403。程式在讀不到 cookie 時會列出偵測到的 profile 清單：
@@ -102,8 +102,8 @@ Google 的登入 cookie（`SID`、`SAPISID` 等）通常是**長效的**，多�
 
 1. 瀏覽器安裝「Get cookies.txt LOCALLY」擴充套件
 2. 登入 Google Drive
-3. 匯出 `drive.google.com` 的 cookie，選 **Netscape 格式**（不是 JSON）
-4. 存成 `cookies.txt` 放在執行目錄，或用 `--cookies 路徑` 指定
+3. 匯出 `drive.google.com` 的 cookie，Netscape 或 JSON 格式都可以
+4. 存成 `cookies.txt`（JSON 就存成 `cookies.json`）放在執行目錄，或用 `--cookies 路徑` 指定
 
 ## 下載加速（選配）
 
